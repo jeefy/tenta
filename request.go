@@ -14,11 +14,19 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	//log.Printf("%v", r.Header)
 	log.Printf("Retrieving %s://%s%s", r.Header.Get("Scheme"), r.Host, r.URL)
 	h1 := fnv1a.HashString64(fmt.Sprintf("%s%s", r.Host, r.URL))
-	filename := fmt.Sprintf("data/%d", h1)
+	filename := fmt.Sprintf("%s/%d", args.dataDir, h1)
 	tentaReqeusts.Inc()
 	if file, err := os.Open(filename); os.IsNotExist(err) {
+		if args.debug {
+			log.Printf("Cache file %s not found", filename)
+		}
 		tentaMisses.Inc()
-		data, err := http.Get(fmt.Sprintf("%s://%s%s", r.Header.Get("Scheme"), r.Host, r.URL))
+		scheme := r.Header.Get("Scheme")
+		if scheme == "" {
+			scheme = "http"
+		}
+		url := fmt.Sprintf("%s://%s%s", scheme, r.Host, r.URL)
+		data, err := http.Get(url)
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprintf(w, "404! Not found")
@@ -31,6 +39,9 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			io.Copy(w, data.Body)
 			return
 		}
+		if args.debug {
+			log.Printf("Created cache file %s", filename)
+		}
 		defer out.Close()
 		writer := io.MultiWriter(w, out)
 		nRead, err := io.Copy(writer, data.Body)
@@ -39,6 +50,9 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		tentaSize.Add(float64(nRead))
 		tentaFiles.Inc()
+		if args.debug {
+			log.Printf("Served / Cached file %s (%d)", filename, nRead)
+		}
 	} else {
 		tentaHits.Inc()
 		log.Printf("Cached file found: %s", filename)

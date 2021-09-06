@@ -76,6 +76,10 @@ func main() {
 
 func run(cmd *cobra.Command, argv []string) error {
 	log.Println("Starting Tenta!")
+	if args.debug {
+		log.Println("Debug logging enabled")
+		log.Printf("Cache dir: %s", args.dataDir)
+	}
 	StartCron()
 	StartMetrics()
 	StartHTTP()
