@@ -2,55 +2,82 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
-	"time"
 
-	"github.com/segmentio/fasthash/fnv1a"
+	"github.com/spf13/cobra"
 )
 
-func main() {
-	// Create a mux for routing incoming requests
-	myHandler := http.NewServeMux()
+var Cmd = &cobra.Command{
+	Use:  "tenta",
+	Long: "Fast and easy local LAN proxy cache",
+	RunE: run,
+}
 
-	// All URLs will be handled by this function
-	myHandler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		//log.Printf("%v", r.Header)
-		log.Printf("Retrieving %s://%s%s", r.Header.Get("Scheme"), r.Host, r.URL)
-		h1 := fnv1a.HashString64(fmt.Sprintf("%s%s", r.Host, r.URL))
-		filename := fmt.Sprintf("data/%d", h1)
+var args struct {
+	debug        bool
+	dataDir      string
+	maxCacheAge  int
+	cronSchedule string
+	httpPort     int
+}
 
-		if file, err := os.Open(filename); os.IsNotExist(err) {
-			// path/to/whatever does not exist
-			data, err := http.Get(fmt.Sprintf("%s://%s%s", r.Header.Get("Scheme"), r.Host, r.URL))
-			if err != nil {
-				w.WriteHeader(http.StatusNotFound)
-				fmt.Fprintf(w, "404! Not found")
-				return
-			}
-			defer data.Body.Close()
-			out, err := os.Create(filename)
-			if err != nil {
-				log.Printf("Error creating file: %s", err)
-				return
-			}
-			defer out.Close()
-			writer := io.MultiWriter(w, out)
-			io.Copy(writer, data.Body)
-		} else {
-			log.Printf("Cached file found: %s", filename)
-			io.Copy(w, file)
-		}
+func init() {
+	flags := Cmd.Flags()
+
+	flags.StringVar(
+		&args.dataDir,
+		"data-dir",
+		"data/",
+		"Directory to use for caching files",
+	)
+	flags.IntVar(
+		&args.maxCacheAge,
+		"max-cache-age",
+		0,
+		"Max age (in hours) of files. Value of 0 means no files will be deleted (default 0)",
+	)
+	flags.IntVar(
+		&args.httpPort,
+		"http-port",
+		8080,
+		"Port to use for the HTTP server",
+	)
+
+	flags.BoolVar(
+		&args.debug,
+		"debug",
+		false,
+		"Enable debug logging",
+	)
+
+	flags.StringVar(
+		&args.cronSchedule,
+		"cron-schedule",
+		"* */1 * * *",
+		"Cron schedule to use for cleaning up cache files",
+	)
+
+	Cmd.RegisterFlagCompletionFunc("output-format", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"json", "prom"}, cobra.ShellCompDirectiveDefault
 	})
+}
 
-	s := &http.Server{
-		Addr:           ":8080",
-		Handler:        myHandler,
-		ReadTimeout:    60 * time.Second,
-		WriteTimeout:   60 * time.Second,
-		MaxHeaderBytes: 1 << 20,
+func main() {
+	log.SetFlags(log.Flags() | log.Lshortfile)
+
+	if err := Cmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	log.Fatal(s.ListenAndServe())
+
+	os.Exit(0)
+}
+
+func run(cmd *cobra.Command, argv []string) error {
+	log.Println("Starting Tenta!")
+	StartCron()
+	StartMetrics()
+	StartHTTP()
+	return nil
 }
