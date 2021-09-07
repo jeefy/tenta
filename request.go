@@ -12,8 +12,21 @@ import (
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
 	//log.Printf("%v", r.Header)
-	log.Printf("Retrieving %s://%s%s", r.Header.Get("Scheme"), r.Host, r.URL)
-	h1 := fnv1a.HashString64(fmt.Sprintf("%s%s", r.Host, r.URL))
+	scheme := r.Header.Get("Scheme")
+	if scheme == "" {
+		scheme = "http"
+	}
+	url := fmt.Sprintf("%s://%s%s", scheme, r.Host, r.URL)
+	cacheKey := url
+	log.Printf("Retrieving %s", url)
+
+	// Steam has too many CDN URLs, but they have a consistent URL
+	// We can assume that if the user agent is Steam, the cache key is the same
+	if r.UserAgent() == "Valve/Steam HTTP Client 1.0" {
+		cacheKey = fmt.Sprintf("%s/%s", "steam", r.URL)
+	}
+
+	h1 := fnv1a.HashString64(cacheKey)
 	filename := fmt.Sprintf("%s/%d", args.dataDir, h1)
 	tentaReqeusts.Inc()
 	if file, err := os.Open(filename); os.IsNotExist(err) {
@@ -21,11 +34,6 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Cache file %s not found", filename)
 		}
 		tentaMisses.Inc()
-		scheme := r.Header.Get("Scheme")
-		if scheme == "" {
-			scheme = "http"
-		}
-		url := fmt.Sprintf("%s://%s%s", scheme, r.Host, r.URL)
 		data, err := http.Get(url)
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
