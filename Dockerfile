@@ -2,8 +2,8 @@ FROM golang:1.16-alpine
 
 WORKDIR /app
 
-COPY ./*.go .
-COPY ./go.* .
+COPY ./*.go ./
+COPY ./go.* ./
 
 RUN CGO_ENABLED=0 GOARCH=amd64 GOOS=linux go build -o bin/tenta *.go 
 
