@@ -11,23 +11,12 @@ import (
 )
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-	//log.Printf("%v", r.Header)
-	scheme := r.Header.Get("Scheme")
-	if scheme == "" {
-		scheme = "http"
-	}
-	url := fmt.Sprintf("%s://%s%s", scheme, r.Host, r.URL)
-	cacheKey := url
+	url := generateURL(r)
 	log.Printf("Retrieving %s", url)
 
-	// Steam has too many CDN URLs, but they have a consistent URL
-	// We can assume that if the user agent is Steam, the cache key is the same
-	if r.UserAgent() == "Valve/Steam HTTP Client 1.0" {
-		cacheKey = fmt.Sprintf("%s/%s", "steam", r.URL)
-	}
+	h1 := generateCacheFilename(url, r)
 
-	h1 := fnv1a.HashString64(cacheKey)
-	filename := fmt.Sprintf("%s/%d", args.dataDir, h1)
+	filename := fmt.Sprintf("%s/%s", args.dataDir, h1)
 	tentaReqeusts.Inc()
 	if file, err := os.Open(filename); os.IsNotExist(err) {
 		if args.debug {
@@ -66,4 +55,27 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Cached file found: %s", filename)
 		io.Copy(w, file)
 	}
+}
+
+func generateURL(r *http.Request) string {
+	scheme := r.Header.Get("Scheme")
+	if scheme == "" {
+		scheme = "http"
+	}
+	return fmt.Sprintf("%s://%s%s", scheme, r.Host, r.URL)
+}
+
+func generateCacheFilename(url string, r *http.Request) string {
+	cacheKey := url
+	// Steam has too many CDN URLs, but they have a consistent URL
+	// We can assume that if the user agent is Steam, the cache key is the same
+	if r.UserAgent() == "Valve/Steam HTTP Client 1.0" {
+		cacheKey = fmt.Sprintf("%s/%s", "steam", r.URL)
+	}
+
+	if args.debug {
+		log.Printf("Generated cache key: %s", cacheKey)
+	}
+
+	return fmt.Sprintf("%d", fnv1a.HashString64(cacheKey))
 }
