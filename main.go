@@ -3,11 +3,12 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
-	"runtime"
-	"runtime/pprof"
 
 	"github.com/spf13/cobra"
+
+	_ "net/http/pprof"
 )
 
 var Cmd = &cobra.Command{
@@ -78,36 +79,17 @@ func main() {
 
 func run(cmd *cobra.Command, argv []string) error {
 	log.Println("Starting Tenta!")
+
 	if args.debug {
-		log.Println("Debug logging enabled")
-		log.Printf("Cache dir: %s", args.dataDir)
-		log.Println("Beginning CPU Profiling")
-		f, err := os.Create("cpu.prof")
-		if err != nil {
-			log.Fatal("could not create CPU profile: ", err)
-		}
-		defer f.Close() // error handling omitted for example
-		if err := pprof.StartCPUProfile(f); err != nil {
-			log.Fatal("could not start CPU profile: ", err)
-		}
-		defer pprof.StopCPUProfile()
+		go func() {
+			log.Println("Starting pprof server on port 6060")
+			log.Println(http.ListenAndServe(":6060", nil))
+		}()
 	}
+
 	StartCron()
 	StartMetrics()
 	StartHTTP()
-
-	if args.debug {
-		log.Println("Beginning Memory Profiling")
-		f, err := os.Create("memory.prof")
-		if err != nil {
-			log.Fatal("could not create memory profile: ", err)
-		}
-		defer f.Close() // error handling omitted for example
-		runtime.GC()    // get up-to-date statistics
-		if err := pprof.WriteHeapProfile(f); err != nil {
-			log.Fatal("could not write memory profile: ", err)
-		}
-	}
 
 	return nil
 }
