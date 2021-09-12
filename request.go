@@ -10,6 +10,10 @@ import (
 	"github.com/segmentio/fasthash/fnv1a"
 )
 
+var (
+	buffer = make([]byte, 32*1024)
+)
+
 func handleRequest(w http.ResponseWriter, r *http.Request) {
 	url := generateURL(r)
 	log.Printf("Retrieving %s", url)
@@ -33,7 +37,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		out, err := os.Create(filename)
 		if err != nil {
 			log.Printf("Error creating file: %s", err)
-			io.Copy(w, data.Body)
+			io.CopyBuffer(w, data.Body, buffer)
 			return
 		}
 		if args.debug {
@@ -41,7 +45,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		defer out.Close()
 		writer := io.MultiWriter(w, out)
-		nRead, err := io.Copy(writer, data.Body)
+		nRead, err := io.CopyBuffer(writer, data.Body, buffer)
 		if err != nil {
 			log.Printf("Error writing data: %s", err)
 		}
@@ -53,7 +57,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	} else {
 		tentaHits.Inc()
 		log.Printf("Cached file found: %s", filename)
-		io.Copy(w, file)
+		io.CopyBuffer(w, file, buffer)
 	}
 }
 
