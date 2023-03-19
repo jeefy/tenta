@@ -2,7 +2,7 @@ build:
 	go build -o bin/tenta *.go
 
 run:
-	go run *.go
+	./bin/tenta
 
 image:
 	docker build -t jeefy/tenta .

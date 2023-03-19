@@ -31,7 +31,7 @@ Flags:
     docker run -d \
     -v path/to/storage:/data \
     -p 80:8080 -p 2112:2112
-    jeefy/tenta:latest 
+    ghcr.io/jeefy/tenta:main 
     --data-dir /data
     --debug
 ```
@@ -60,7 +60,7 @@ spec:
     spec:
       containers:
       - name: tenta
-        image: jeefy/tenta:latest
+        image: ghcr.io/jeefy/tenta:main
         args:
           - "--data-dir"
           - "/data"

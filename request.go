@@ -6,15 +6,16 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/segmentio/fasthash/fnv1a"
 )
 
-var (
-	buffer = make([]byte, 32*1024)
-)
-
 func handleRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("tenta-proxy") == "true" {
+		log.Printf("Proxy loop detected, aborting")
+		return
+	}
 	url := generateURL(r)
 	log.Printf("Retrieving %s", url)
 
@@ -27,7 +28,16 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Cache file %s not found", filename)
 		}
 		tentaMisses.Inc()
-		data, err := http.Get(url)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			log.Printf("Error creating request: %s", err)
+			return
+		}
+		req.Header.Add("tenta-proxy", `true`)
+		req.Header.Add("request-timestamp", fmt.Sprintf("%d", time.Now().Unix()))
+		client := &http.Client{}
+		data, err := client.Do(req)
+		//data, err := http.Get(url)
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprintf(w, "404! Not found")
@@ -36,8 +46,11 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		defer data.Body.Close()
 		out, err := os.Create(filename)
 		if err != nil {
-			log.Printf("Error creating file: %s", err)
-			io.CopyBuffer(w, data.Body, buffer)
+			sent, err := io.Copy(w, data.Body)
+			if err != nil {
+				log.Printf("Error creating local file, no data sent: %s", err)
+			}
+			log.Printf("Error creating local file, sent %d bytes: %s", sent, err)
 			return
 		}
 		if args.debug {
@@ -45,9 +58,10 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		defer out.Close()
 		writer := io.MultiWriter(w, out)
-		nRead, err := io.CopyBuffer(writer, data.Body, buffer)
+		nRead, err := io.Copy(writer, data.Body)
 		if err != nil {
 			log.Printf("Error writing data: %s", err)
+			return
 		}
 		tentaSize.Add(float64(nRead))
 		tentaFiles.Inc()
@@ -56,8 +70,12 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		tentaHits.Inc()
-		log.Printf("Cached file found: %s", filename)
-		io.CopyBuffer(w, file, buffer)
+		written, err := io.Copy(w, file)
+		if err != nil {
+			log.Printf("Error serving %s: %s", filename, err)
+			return
+		}
+		log.Printf("Cached file found: %s (%d)", filename, written)
 	}
 }
 
