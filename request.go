@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -12,22 +15,61 @@ import (
 )
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("tenta-proxy") == "true" {
-		log.Printf("Proxy loop detected, aborting")
-		return
-	}
 	url := generateURL(r)
-	log.Printf("Retrieving %s", url)
-
 	h1 := generateCacheFilename(url, r)
-
 	filename := fmt.Sprintf("%s/%s", args.dataDir, h1)
 	tentaReqeusts.Inc()
-	if file, err := os.Open(filename); os.IsNotExist(err) {
+
+	if args.debug {
+		log.Printf("Request for %s (%s)", filename, url)
+	}
+
+	if r.Header.Get("tenta-proxy") == "true" {
+		w.WriteHeader(http.StatusLoopDetected)
+		log.Printf("Sending Proxy loop detected, aborting")
+		fmt.Fprintf(w, "Proxy loop detected, aborting")
+		return
+	}
+
+	_, err := os.Stat(filename)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("Error checking file: %s", err)
+			return
+		}
+
 		if args.debug {
 			log.Printf("Cache file %s not found", filename)
 		}
 		tentaMisses.Inc()
+
+		// Presumably, we're running custom DNS pointing to this
+		// We need to ignore that and use a custom DNS resolver
+		// Otherwise we will have a fun proxy loop situation
+		var (
+			dnsResolverIP        = "8.8.8.8:53" // Google DNS resolver.
+			dnsResolverProto     = "udp"        // Protocol to use for the DNS resolver
+			dnsResolverTimeoutMs = 5000         // Timeout (ms) for the DNS resolver (optional)
+		)
+
+		dialer := &net.Dialer{
+			Resolver: &net.Resolver{
+				PreferGo: true,
+				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+					d := net.Dialer{
+						Timeout: time.Duration(dnsResolverTimeoutMs) * time.Millisecond,
+					}
+					return d.DialContext(ctx, dnsResolverProto, dnsResolverIP)
+				},
+			},
+		}
+
+		dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, addr)
+		}
+
+		http.DefaultTransport.(*http.Transport).DialContext = dialContext
+
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
 			log.Printf("Error creating request: %s", err)
@@ -35,17 +77,34 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Header.Add("tenta-proxy", `true`)
 		req.Header.Add("request-timestamp", fmt.Sprintf("%d", time.Now().Unix()))
+
 		client := &http.Client{}
+
 		data, err := client.Do(req)
-		//data, err := http.Get(url)
 		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprintf(w, "404! Not found")
-			return
+			log.Printf("Error fetching data: %s", err)
 		}
 		defer data.Body.Close()
-		out, err := os.Create(filename)
+		if data.StatusCode != http.StatusOK {
+			if data.StatusCode == http.StatusNotFound {
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprintf(w, "404! Not Found")
+				return
+			}
+			if data.StatusCode == http.StatusLoopDetected {
+				w.WriteHeader(http.StatusLoopDetected)
+				log.Printf("Received Proxy loop detected, aborting")
+				fmt.Fprintf(w, "Proxy loop detected, aborting")
+				return
+			}
+			w.WriteHeader(data.StatusCode)
+			io.Copy(w, data.Body)
+			return
+		}
+
+		file, err := os.Create(filename)
 		if err != nil {
+			// Still try to send the data to the client
 			sent, err := io.Copy(w, data.Body)
 			if err != nil {
 				log.Printf("Error creating local file, no data sent: %s", err)
@@ -56,9 +115,8 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		if args.debug {
 			log.Printf("Created cache file %s", filename)
 		}
-		defer out.Close()
-		writer := io.MultiWriter(w, out)
-		nRead, err := io.Copy(writer, data.Body)
+		defer file.Close()
+		nRead, err := file.ReadFrom(data.Body)
 		if err != nil {
 			log.Printf("Error writing data: %s", err)
 			return
@@ -66,17 +124,23 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		tentaSize.Add(float64(nRead))
 		tentaFiles.Inc()
 		if args.debug {
-			log.Printf("Served / Cached file %s (%d)", filename, nRead)
+			log.Printf("Cached %s as %s (%d bytes)", url, filename, nRead)
 		}
 	} else {
 		tentaHits.Inc()
-		written, err := io.Copy(w, file)
-		if err != nil {
-			log.Printf("Error serving %s: %s", filename, err)
-			return
-		}
-		log.Printf("Cached file found: %s (%d)", filename, written)
 	}
+	fileBytes, err := ioutil.ReadFile(filename)
+	if err != nil {
+		log.Printf("Error opening file: %s", err)
+		return
+	}
+
+	written, err := w.Write(fileBytes)
+	if err != nil {
+		log.Printf("Error serving %s: %s", filename, err)
+		return
+	}
+	log.Printf("Cached file found: %s (%d)", filename, written)
 }
 
 func generateURL(r *http.Request) string {
@@ -92,7 +156,7 @@ func generateCacheFilename(url string, r *http.Request) string {
 	// Steam has too many CDN URLs, but they have a consistent URL
 	// We can assume that if the user agent is Steam, the cache key is the same
 	if r.UserAgent() == "Valve/Steam HTTP Client 1.0" {
-		cacheKey = fmt.Sprintf("%s/%s", "steam", r.URL)
+		cacheKey = fmt.Sprintf("%s%s", "steam", r.URL)
 	}
 
 	if args.debug {
