@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -18,7 +17,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	url := generateURL(r)
 	h1 := generateCacheFilename(url, r)
 	filename := fmt.Sprintf("%s/%s", args.dataDir, h1)
-	tentaReqeusts.Inc()
+	incRequests()
 
 	if args.debug {
 		log.Printf("Request for %s (%s)", filename, url)
@@ -28,6 +27,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusLoopDetected)
 		log.Printf("Sending Proxy loop detected, aborting")
 		fmt.Fprintf(w, "Proxy loop detected, aborting")
+		incErrors()
 		return
 	}
 
@@ -35,13 +35,16 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if !os.IsNotExist(err) {
 			log.Printf("Error checking file: %s", err)
+			incErrors()
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, "Internal server error")
 			return
 		}
 
 		if args.debug {
 			log.Printf("Cache file %s not found", filename)
 		}
-		tentaMisses.Inc()
+		incMisses()
 
 		// Presumably, we're running custom DNS pointing to this
 		// We need to ignore that and use a custom DNS resolver
@@ -73,6 +76,9 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
 			log.Printf("Error creating request: %s", err)
+			incErrors()
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, "Error creating request")
 			return
 		}
 		req.Header.Add("tenta-proxy", `true`)
@@ -83,10 +89,16 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		data, err := client.Do(req)
 		if err != nil {
 			log.Printf("Error fetching data: %s", err)
+			incErrors()
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, "Error fetching data from origin")
+			return
 		}
 		defer data.Body.Close()
+
 		if data.StatusCode != http.StatusOK {
 			if data.StatusCode == http.StatusNotFound {
+				incNotFound()
 				w.WriteHeader(http.StatusNotFound)
 				fmt.Fprintf(w, "404! Not Found")
 				return
@@ -95,7 +107,12 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusLoopDetected)
 				log.Printf("Received Proxy loop detected, aborting")
 				fmt.Fprintf(w, "Proxy loop detected, aborting")
+				incErrors()
 				return
+			}
+			// Track 5xx server errors
+			if data.StatusCode >= 500 && data.StatusCode < 600 {
+				incServerErr()
 			}
 			w.WriteHeader(data.StatusCode)
 			io.Copy(w, data.Body)
@@ -110,6 +127,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Error creating local file, no data sent: %s", err)
 			}
 			log.Printf("Error creating local file, sent %d bytes: %s", sent, err)
+			incErrors()
 			return
 		}
 		if args.debug {
@@ -119,28 +137,34 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		nRead, err := file.ReadFrom(data.Body)
 		if err != nil {
 			log.Printf("Error writing data: %s", err)
+			incErrors()
 			return
 		}
-		tentaSize.Add(float64(nRead))
-		tentaFiles.Inc()
+		addSize(nRead)
+		incFiles()
 		if args.debug {
 			log.Printf("Cached %s as %s (%d bytes)", url, filename, nRead)
 		}
 	} else {
 		incHits()
 	}
-	fileBytes, err := ioutil.ReadFile(filename)
+
+	fileBytes, err := os.ReadFile(filename)
 	if err != nil {
 		log.Printf("Error opening file: %s", err)
+		incErrors()
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "Error reading cached file")
 		return
 	}
 
 	written, err := w.Write(fileBytes)
 	if err != nil {
 		log.Printf("Error serving %s: %s", filename, err)
+		incErrors()
 		return
 	}
-	log.Printf("Cached file found: %s (%d)", filename, written)
+	log.Printf("Cached file found: %s (%d bytes)", filename, written)
 }
 
 func generateURL(r *http.Request) string {

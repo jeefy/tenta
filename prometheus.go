@@ -14,24 +14,28 @@ import (
 )
 
 var (
-	tentaReqeusts prometheus.Counter
-	tentaHits     prometheus.Counter
-	tentaMisses   prometheus.Counter
-	tentaFiles    prometheus.Gauge
-	tentaSize     prometheus.Gauge
-	tentaErrors   prometheus.Counter
+	tentaRequests  prometheus.Counter
+	tentaHits      prometheus.Counter
+	tentaMisses    prometheus.Counter
+	tentaFiles     prometheus.Gauge
+	tentaSize      prometheus.Gauge
+	tentaErrors    prometheus.Counter
+	tentaNotFound  prometheus.Counter
+	tentaServerErr prometheus.Counter
 
 	// Atomic counters for API access
-	requestsCount int64
-	hitsCount     int64
-	missesCount   int64
-	errorsCount   int64
-	filesCount    int64
-	sizeCount     int64
+	requestsCount  int64
+	hitsCount      int64
+	missesCount    int64
+	errorsCount    int64
+	notFoundCount  int64
+	serverErrCount int64
+	filesCount     int64
+	sizeCount      int64
 )
 
 func init() {
-	tentaReqeusts = promauto.NewCounter(prometheus.CounterOpts{
+	tentaRequests = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "tenta_requests_received",
 		Help: "The total number of requests",
 	})
@@ -55,11 +59,19 @@ func init() {
 		Name: "tenta_errors",
 		Help: "The total number of errors",
 	})
+	tentaNotFound = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "tenta_not_found",
+		Help: "The total number of 404 responses",
+	})
+	tentaServerErr = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "tenta_server_errors",
+		Help: "The total number of 5xx responses",
+	})
 }
 
 // Helper functions for cache API
 func incRequests() {
-	tentaReqeusts.Inc()
+	tentaRequests.Inc()
 	atomic.AddInt64(&requestsCount, 1)
 }
 
@@ -78,6 +90,16 @@ func incErrors() {
 	atomic.AddInt64(&errorsCount, 1)
 }
 
+func incNotFound() {
+	tentaNotFound.Inc()
+	atomic.AddInt64(&notFoundCount, 1)
+}
+
+func incServerErr() {
+	tentaServerErr.Inc()
+	atomic.AddInt64(&serverErrCount, 1)
+}
+
 func getRequestsCount() int64 {
 	return atomic.LoadInt64(&requestsCount)
 }
@@ -92,6 +114,14 @@ func getMissesCount() int64 {
 
 func getErrorsCount() int64 {
 	return atomic.LoadInt64(&errorsCount)
+}
+
+func getNotFoundCount() int64 {
+	return atomic.LoadInt64(&notFoundCount)
+}
+
+func getServerErrCount() int64 {
+	return atomic.LoadInt64(&serverErrCount)
 }
 
 func incFiles() {
@@ -136,8 +166,10 @@ func StartMetrics() {
 		}
 
 		for _, file := range tmpfiles {
-			tentaFiles.Inc()
-			tentaSize.Add(float64(file.Size()))
+			if file.Mode().IsRegular() {
+				incFiles()
+				addSize(file.Size())
+			}
 		}
 
 		log.Printf("Starting metrics server on %s", port)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -97,22 +96,24 @@ func handleCacheStats(w http.ResponseWriter, r *http.Request) {
 func handleCacheList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	files, err := ioutil.ReadDir(args.dataDir)
+	files, err := os.ReadDir(args.dataDir)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{
 			"error": fmt.Sprintf("Error reading cache dir: %s", err.Error()),
 		})
+		incErrors()
 		return
 	}
 
 	entries := []CacheEntry{}
 	for _, file := range files {
-		if file.Mode().IsRegular() {
+		if !file.IsDir() {
+			fileInfo, _ := file.Info()
 			entries = append(entries, CacheEntry{
 				Filename: file.Name(),
-				Size:     file.Size(),
-				ModTime:  file.ModTime().String(),
+				Size:     fileInfo.Size(),
+				ModTime:  fileInfo.ModTime().String(),
 			})
 		}
 	}
@@ -183,7 +184,7 @@ func handleCacheDelete(w http.ResponseWriter, r *http.Request) {
 		})
 	} else {
 		// Delete all cache entries
-		files, err := ioutil.ReadDir(args.dataDir)
+		files, err := os.ReadDir(args.dataDir)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -196,16 +197,17 @@ func handleCacheDelete(w http.ResponseWriter, r *http.Request) {
 		deleted := 0
 		var totalSize int64
 		for _, file := range files {
-			if file.Mode().IsRegular() {
+			if !file.IsDir() {
+				fileInfo, _ := file.Info()
 				fullPath := filepath.Join(args.dataDir, file.Name())
 				if err := os.Remove(fullPath); err != nil {
 					log.Printf("Error deleting %s: %s", fullPath, err)
 					incErrors()
 					continue
 				}
-				subSize(file.Size())
+				subSize(fileInfo.Size())
 				decFiles()
-				totalSize += file.Size()
+				totalSize += fileInfo.Size()
 				deleted++
 			}
 		}

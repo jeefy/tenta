@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -10,37 +9,51 @@ import (
 	"github.com/go-co-op/gocron"
 )
 
-func findOldFiles(dir string) (files []os.FileInfo, err error) {
-	tmpfiles, err := ioutil.ReadDir(dir)
+// OldFileEntry represents a file that is old
+type OldFileEntry struct {
+	Name string
+	Size int64
+}
+
+func findOldFiles(dir string) (files []OldFileEntry, err error) {
+	tmpfiles, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 
 	for _, file := range tmpfiles {
-		if file.Mode().IsRegular() {
-			if time.Since(file.ModTime()) > time.Duration(args.maxCacheAge)*time.Hour {
+		if !file.IsDir() {
+			fileInfo, err := file.Info()
+			if err != nil {
+				continue
+			}
+			if time.Since(fileInfo.ModTime()) > time.Duration(args.maxCacheAge)*time.Hour {
 				if args.debug {
-					log.Printf("Found old file %s with mod time of %d", file.Name(), file.ModTime().Unix())
+					log.Printf("Found old file %s with mod time of %d", file.Name(), fileInfo.ModTime().Unix())
 				}
-				files = append(files, file)
+				files = append(files, OldFileEntry{
+					Name: file.Name(),
+					Size: fileInfo.Size(),
+				})
 			}
 		}
 	}
 	return
 }
 
-func deleteFiles(path string, files []os.FileInfo) {
+func deleteFiles(path string, files []OldFileEntry) {
 	log.Printf("Deleting %d old files\n", len(files))
 	for _, file := range files {
-		fullPath := filepath.Join(path, file.Name())
+		fullPath := filepath.Join(path, file.Name)
 		if args.debug {
 			log.Printf("Deleting %s", fullPath)
 		}
 		err := os.Remove(fullPath)
 		if err != nil {
 			log.Printf("Error deleting %s: %s\n", fullPath, err)
+			incErrors()
 		}
-		subSize(file.Size())
+		subSize(file.Size)
 		decFiles()
 	}
 }
@@ -49,6 +62,8 @@ func pruneFiles() {
 	log.Printf("Pruning old files in %s\n", args.dataDir)
 	files, err := findOldFiles(args.dataDir)
 	if err != nil {
+		log.Printf("Error finding old files: %s", err)
+		incErrors()
 		return
 	}
 
