@@ -18,11 +18,13 @@ var Cmd = &cobra.Command{
 }
 
 var args struct {
-	debug        bool
-	dataDir      string
-	maxCacheAge  int
-	cronSchedule string
-	httpPort     int
+	debug           bool
+	dataDir         string
+	maxCacheAge     int
+	cronSchedule    string
+	httpPort        int
+	requestTimeout  int
+	maxBodySize     int64
 }
 
 func init() {
@@ -59,6 +61,20 @@ func init() {
 		"cron-schedule",
 		"* */1 * * *",
 		"Cron schedule to use for cleaning up cache files",
+	)
+
+	flags.IntVar(
+		&args.requestTimeout,
+		"request-timeout",
+		30,
+		"Timeout (in seconds) for outbound HTTP requests",
+	)
+
+	flags.Int64Var(
+		&args.maxBodySize,
+		"max-body-size",
+		1073741824, // 1GB default
+		"Maximum size (in bytes) of response bodies to cache",
 	)
 
 	Cmd.RegisterFlagCompletionFunc("output-format", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -103,6 +119,16 @@ func validateConfig() error {
 	// Validate HTTP port
 	if args.httpPort < 1 || args.httpPort > 65535 {
 		return fmt.Errorf("http-port must be between 1 and 65535, got %d", args.httpPort)
+	}
+
+	// Validate request timeout
+	if args.requestTimeout < 1 {
+		return fmt.Errorf("request-timeout must be >= 1, got %d", args.requestTimeout)
+	}
+
+	// Validate max body size
+	if args.maxBodySize < 1024 { // Minimum 1KB
+		return fmt.Errorf("max-body-size must be at least 1024 bytes, got %d", args.maxBodySize)
 	}
 
 	// Note: Cron schedule validation happens in StartCron()

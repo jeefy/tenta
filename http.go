@@ -16,12 +16,15 @@ import (
 
 // CacheStats represents cache statistics
 type CacheStats struct {
-	TotalRequests int64   `json:"total_requests"`
-	CacheHits     int64   `json:"cache_hits"`
-	CacheMisses   int64   `json:"cache_misses"`
-	HitRatio      float64 `json:"hit_ratio"`
-	FileCount     int64   `json:"file_count"`
-	CacheSize     int64   `json:"cache_size_bytes"`
+	TotalRequests  int64   `json:"total_requests"`
+	CacheHits      int64   `json:"cache_hits"`
+	CacheMisses    int64   `json:"cache_misses"`
+	HitRatio       float64 `json:"hit_ratio"`
+	NotFound       int64   `json:"not_found_404"`
+	ServerErrors   int64   `json:"server_errors_5xx"`
+	OtherErrors    int64   `json:"other_errors"`
+	FileCount      int64   `json:"file_count"`
+	CacheSize      int64   `json:"cache_size_bytes"`
 }
 
 // HealthStatus represents service health information
@@ -74,6 +77,9 @@ func handleCacheStats(w http.ResponseWriter, r *http.Request) {
 	totalReq := getRequestsCount()
 	hits := getHitsCount()
 	misses := getMissesCount()
+	notFound := getNotFoundCount()
+	serverErrors := getServerErrCount()
+	otherErrors := getErrorsCount()
 
 	hitRatio := 0.0
 	if totalReq > 0 {
@@ -85,6 +91,9 @@ func handleCacheStats(w http.ResponseWriter, r *http.Request) {
 		CacheHits:     hits,
 		CacheMisses:   misses,
 		HitRatio:      hitRatio,
+		NotFound:      notFound,
+		ServerErrors:  serverErrors,
+		OtherErrors:   otherErrors,
 		FileCount:     getFilesCount(),
 		CacheSize:     getSizeCount(),
 	}

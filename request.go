@@ -81,10 +81,18 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "Error creating request")
 			return
 		}
+
+		// Apply context with timeout from the incoming request
+		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(args.requestTimeout)*time.Second)
+		defer cancel()
+		req = req.WithContext(ctx)
+
 		req.Header.Add("tenta-proxy", `true`)
 		req.Header.Add("request-timestamp", fmt.Sprintf("%d", time.Now().Unix()))
 
-		client := &http.Client{}
+		client := &http.Client{
+			Timeout: time.Duration(args.requestTimeout) * time.Second,
+		}
 
 		data, err := client.Do(req)
 		if err != nil {
@@ -95,6 +103,16 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer data.Body.Close()
+
+		// Check cache control headers to see if we should cache this response
+		if !shouldCacheResponse(data) {
+			if args.debug {
+				log.Printf("Response should not be cached based on headers")
+			}
+			w.WriteHeader(data.StatusCode)
+			io.Copy(w, data.Body)
+			return
+		}
 
 		if data.StatusCode != http.StatusOK {
 			if data.StatusCode == http.StatusNotFound {
