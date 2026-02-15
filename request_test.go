@@ -92,3 +92,60 @@ func TestGeneratedCacheFilename(t *testing.T) {
 		}
 	}
 }
+
+// TestMetrics verifies that metric counters are properly incremented
+func TestMetrics(t *testing.T) {
+	// Store initial values
+	initialReqs := getRequestsCount()
+	initialHits := getHitsCount()
+	initialMisses := getMissesCount()
+	initialErrors := getErrorsCount()
+
+	// Increment counters
+	incRequests()
+	incHits()
+	incMisses()
+	incErrors()
+
+	// Verify increments
+	if getRequestsCount() != initialReqs+1 {
+		t.Errorf("incRequests() failed: expected %d, got %d", initialReqs+1, getRequestsCount())
+	}
+	if getHitsCount() != initialHits+1 {
+		t.Errorf("incHits() failed: expected %d, got %d", initialHits+1, getHitsCount())
+	}
+	if getMissesCount() != initialMisses+1 {
+		t.Errorf("incMisses() failed: expected %d, got %d", initialMisses+1, getMissesCount())
+	}
+	if getErrorsCount() != initialErrors+1 {
+		t.Errorf("incErrors() failed: expected %d, got %d", initialErrors+1, getErrorsCount())
+	}
+}
+
+// TestSizeMetrics verifies size tracking
+func TestSizeMetrics(t *testing.T) {
+	initialSize := getSizeCount()
+	initialFiles := getFilesCount()
+
+	// Add size and file
+	addSize(1024)
+	incFiles()
+
+	if getSizeCount() != initialSize+1024 {
+		t.Errorf("addSize() failed: expected %d, got %d", initialSize+1024, getSizeCount())
+	}
+	if getFilesCount() != initialFiles+1 {
+		t.Errorf("incFiles() failed: expected %d, got %d", initialFiles+1, getFilesCount())
+	}
+
+	// Subtract size and file
+	subSize(1024)
+	decFiles()
+
+	if getSizeCount() != initialSize {
+		t.Errorf("subSize() failed: expected %d, got %d", initialSize, getSizeCount())
+	}
+	if getFilesCount() != initialFiles {
+		t.Errorf("decFiles() failed: expected %d, got %d", initialFiles, getFilesCount())
+	}
+}
