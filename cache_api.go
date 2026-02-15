@@ -1,18 +1,14 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
-	"time"
 )
 
 // CacheStats represents cache statistics
@@ -21,73 +17,41 @@ type CacheStats struct {
 	CacheHits     int64   `json:"cache_hits"`
 	CacheMisses   int64   `json:"cache_misses"`
 	HitRatio      float64 `json:"hit_ratio"`
-	FileCount     int64   `json:"file_count"`
+	FileCount     int     `json:"file_count"`
 	CacheSize     int64   `json:"cache_size_bytes"`
-}
-
-// HealthStatus represents service health information
-type HealthStatus struct {
-	Status       string `json:"status"`
-	Uptime       string `json:"uptime"`
-	DataDir      string `json:"data_dir"`
-	CacheFiles   int64  `json:"cache_files"`
-	CacheSize    int64  `json:"cache_size_bytes"`
-	MaxCacheAge  int    `json:"max_cache_age_hours"`
-	CronSchedule string `json:"cron_schedule"`
-}
-
-// CacheEntry represents a single cached file
-type CacheEntry struct {
-	Filename string `json:"filename"`
-	Size     int64  `json:"size"`
-	ModTime  string `json:"mod_time"`
-}
-
-// CacheListResponse represents the response for listing cache entries
-type CacheListResponse struct {
-	Count   int           `json:"count"`
-	Entries []CacheEntry  `json:"entries"`
-}
-
-var startTime = time.Now()
-
-// handleHealth returns service health status
-func handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	health := HealthStatus{
-		Status:       "healthy",
-		Uptime:       time.Since(startTime).String(),
-		DataDir:      args.dataDir,
-		CacheFiles:   getFilesCount(),
-		CacheSize:    getSizeCount(),
-		MaxCacheAge:  args.maxCacheAge,
-		CronSchedule: args.cronSchedule,
-	}
-
-	json.NewEncoder(w).Encode(health)
 }
 
 // handleCacheStats returns current cache statistics
 func handleCacheStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	totalReq := getRequestsCount()
-	hits := getHitsCount()
-	misses := getMissesCount()
+	hitsVal := getHitsCount()
+	missesVal := getMissesCount()
+	requestsVal := getRequestsCount()
 
 	hitRatio := 0.0
-	if totalReq > 0 {
-		hitRatio = float64(hits) / float64(totalReq)
+	if requestsVal > 0 {
+		hitRatio = float64(hitsVal) / float64(requestsVal)
+	}
+
+	// Count files manually for accurate count
+	files, _ := ioutil.ReadDir(args.dataDir)
+	fileCount := 0
+	var totalSize int64 = 0
+	for _, f := range files {
+		if f.Mode().IsRegular() {
+			fileCount++
+			totalSize += f.Size()
+		}
 	}
 
 	stats := CacheStats{
-		TotalRequests: totalReq,
-		CacheHits:     hits,
-		CacheMisses:   misses,
+		TotalRequests: requestsVal,
+		CacheHits:     hitsVal,
+		CacheMisses:   missesVal,
 		HitRatio:      hitRatio,
-		FileCount:     getFilesCount(),
-		CacheSize:     getSizeCount(),
+		FileCount:     fileCount,
+		CacheSize:     totalSize,
 	}
 
 	json.NewEncoder(w).Encode(stats)
@@ -106,6 +70,12 @@ func handleCacheList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	type CacheEntry struct {
+		Filename string `json:"filename"`
+		Size     int64  `json:"size"`
+		ModTime  string `json:"mod_time"`
+	}
+
 	entries := []CacheEntry{}
 	for _, file := range files {
 		if file.Mode().IsRegular() {
@@ -117,12 +87,10 @@ func handleCacheList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	response := CacheListResponse{
-		Count:   len(entries),
-		Entries: entries,
-	}
-
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"count":   len(entries),
+		"entries": entries,
+	})
 }
 
 // handleCacheDelete handles cache deletion
@@ -138,7 +106,7 @@ func handleCacheDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if specific cache key is provided
-	key := strings.TrimPrefix(r.URL.Path, "/api/cache/delete/")
+	key := strings.TrimPrefix(r.URL.Path, "/cache/delete/")
 	if key != "" && key != r.URL.Path {
 		// Delete specific cache entry
 		filename := filepath.Join(args.dataDir, key)
@@ -168,18 +136,16 @@ func handleCacheDelete(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]string{
 				"error": fmt.Sprintf("Failed to delete cache entry: %s", err.Error()),
 			})
-			incErrors()
 			return
 		}
 
-		subSize(file.Size())
-		decFiles()
+		tentaSize.Sub(float64(file.Size()))
+		tentaFiles.Dec()
 		log.Printf("Deleted cache entry: %s", key)
 
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]string{
 			"status": "deleted",
 			"key":    key,
-			"size":   file.Size(),
 		})
 	} else {
 		// Delete all cache entries
@@ -189,81 +155,73 @@ func handleCacheDelete(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]string{
 				"error": fmt.Sprintf("Error reading cache dir: %s", err.Error()),
 			})
-			incErrors()
 			return
 		}
 
 		deleted := 0
-		var totalSize int64
 		for _, file := range files {
 			if file.Mode().IsRegular() {
 				fullPath := filepath.Join(args.dataDir, file.Name())
 				if err := os.Remove(fullPath); err != nil {
 					log.Printf("Error deleting %s: %s", fullPath, err)
-					incErrors()
 					continue
 				}
-				subSize(file.Size())
-				decFiles()
-				totalSize += file.Size()
+				tentaSize.Sub(float64(file.Size()))
+				tentaFiles.Dec()
 				deleted++
 			}
 		}
 
 		log.Printf("Cleared entire cache: deleted %d files", deleted)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":      "cleared",
-			"deleted":     deleted,
-			"size_freed":  totalSize,
+			"status":  "cleared",
+			"deleted": deleted,
 		})
 	}
 }
 
-func StartHTTP() {
-	port := fmt.Sprintf(":%d", args.httpPort)
-	log.Printf("Starting HTTP server on %s", port)
-	// Create a mux for routing incoming requests
-	myHandler := http.NewServeMux()
+// handleCacheInfo returns detailed cache information
+func handleCacheInfo(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 
-	// API endpoints
-	myHandler.HandleFunc("/api/health", handleHealth)
-	myHandler.HandleFunc("/api/cache/stats", handleCacheStats)
-	myHandler.HandleFunc("/api/cache/list", handleCacheList)
-	myHandler.HandleFunc("/api/cache/delete", handleCacheDelete)
-	myHandler.HandleFunc("/api/cache/delete/", handleCacheDelete)
-
-	// Proxy endpoint (all other paths)
-	myHandler.HandleFunc("/", handleRequest)
-
-	s := &http.Server{
-		Addr:           port,
-		Handler:        myHandler,
-		ReadTimeout:    60 * time.Second,
-		WriteTimeout:   60 * time.Second,
-		MaxHeaderBytes: 1 << 20,
+	files, err := ioutil.ReadDir(args.dataDir)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Error reading cache dir: %s", err.Error()),
+		})
+		return
 	}
 
-	done := make(chan os.Signal, 1)
-	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	// Calculate size distribution
+	smallFiles := 0   // < 1MB
+	mediumFiles := 0  // 1-10MB
+	largeFiles := 0   // 10-100MB
+	hugeFiles := 0    // > 100MB
 
-	go func() {
-		if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %s\n", err)
+	for _, file := range files {
+		if !file.Mode().IsRegular() {
+			continue
 		}
-	}()
-	log.Print("Server Started")
-
-	<-done
-	log.Print("Server Stopped")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() {
-		// extra handling here
-		cancel()
-	}()
-
-	if err := s.Shutdown(ctx); err != nil {
-		log.Fatalf("Server Shutdown Failed:%+v", err)
+		size := file.Size()
+		if size < 1024*1024 {
+			smallFiles++
+		} else if size < 10*1024*1024 {
+			mediumFiles++
+		} else if size < 100*1024*1024 {
+			largeFiles++
+		} else {
+			hugeFiles++
+		}
 	}
-	log.Print("Server Exited Properly")
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"total_files": len(files),
+		"size_distribution": map[string]int{
+			"small_<1mb":     smallFiles,
+			"medium_1-10mb":  mediumFiles,
+			"large_10-100mb": largeFiles,
+			"huge_>100mb":    hugeFiles,
+		},
+	})
 }

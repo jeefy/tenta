@@ -127,7 +127,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Cached %s as %s (%d bytes)", url, filename, nRead)
 		}
 	} else {
-		tentaHits.Inc()
+		incHits()
 	}
 	fileBytes, err := ioutil.ReadFile(filename)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -13,6 +14,21 @@ import (
 )
 
 var (
+	tentaReqeusts prometheus.Counter
+	tentaHits     prometheus.Counter
+	tentaMisses   prometheus.Counter
+	tentaFiles    prometheus.Gauge
+	tentaSize     prometheus.Gauge
+	tentaErrors   prometheus.Counter
+
+	// Atomic counters for API access
+	requestsCount int64
+	hitsCount     int64
+	missesCount   int64
+	errorsCount   int64
+)
+
+func init() {
 	tentaReqeusts = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "tenta_requests_received",
 		Help: "The total number of requests",
@@ -33,7 +49,48 @@ var (
 		Name: "tenta_size",
 		Help: "The size of the cache",
 	})
-)
+	tentaErrors = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "tenta_errors",
+		Help: "The total number of errors",
+	})
+}
+
+// Helper functions for cache API
+func incRequests() {
+	tentaReqeusts.Inc()
+	atomic.AddInt64(&requestsCount, 1)
+}
+
+func incHits() {
+	tentaHits.Inc()
+	atomic.AddInt64(&hitsCount, 1)
+}
+
+func incMisses() {
+	tentaMisses.Inc()
+	atomic.AddInt64(&missesCount, 1)
+}
+
+func incErrors() {
+	tentaErrors.Inc()
+	atomic.AddInt64(&errorsCount, 1)
+}
+
+func getRequestsCount() int64 {
+	return atomic.LoadInt64(&requestsCount)
+}
+
+func getHitsCount() int64 {
+	return atomic.LoadInt64(&hitsCount)
+}
+
+func getMissesCount() int64 {
+	return atomic.LoadInt64(&missesCount)
+}
+
+func getErrorsCount() int64 {
+	return atomic.LoadInt64(&errorsCount)
+}
 
 func StartMetrics() {
 	go func() {
