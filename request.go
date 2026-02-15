@@ -152,12 +152,30 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Created cache file %s", filename)
 		}
 		defer file.Close()
-		nRead, err := file.ReadFrom(data.Body)
+
+		// Limit the size of data we cache
+		limitedBody := io.LimitReader(data.Body, args.maxBodySize)
+		nRead, err := file.ReadFrom(limitedBody)
 		if err != nil {
 			log.Printf("Error writing data: %s", err)
 			incErrors()
 			return
 		}
+
+		// Check if the response was larger than our limit
+		// If so, truncate the cache file
+		if nRead >= args.maxBodySize {
+			if args.debug {
+				log.Printf("Response %s exceeded max body size (%d >= %d), removing cache", filename, nRead, args.maxBodySize)
+			}
+			file.Close()
+			os.Remove(filename)
+			incErrors()
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, "Response too large to cache")
+			return
+		}
+
 		addSize(nRead)
 		incFiles()
 		if args.debug {
