@@ -26,6 +26,8 @@ var (
 	hitsCount     int64
 	missesCount   int64
 	errorsCount   int64
+	filesCount    int64
+	sizeCount     int64
 )
 
 func init() {
@@ -90,6 +92,34 @@ func getMissesCount() int64 {
 
 func getErrorsCount() int64 {
 	return atomic.LoadInt64(&errorsCount)
+}
+
+func incFiles() {
+	tentaFiles.Inc()
+	atomic.AddInt64(&filesCount, 1)
+}
+
+func decFiles() {
+	tentaFiles.Dec()
+	atomic.AddInt64(&filesCount, -1)
+}
+
+func addSize(size int64) {
+	tentaSize.Add(float64(size))
+	atomic.AddInt64(&sizeCount, size)
+}
+
+func subSize(size int64) {
+	tentaSize.Sub(float64(size))
+	atomic.AddInt64(&sizeCount, -size)
+}
+
+func getFilesCount() int64 {
+	return atomic.LoadInt64(&filesCount)
+}
+
+func getSizeCount() int64 {
+	return atomic.LoadInt64(&sizeCount)
 }
 
 func StartMetrics() {

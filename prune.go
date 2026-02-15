@@ -40,8 +40,8 @@ func deleteFiles(path string, files []os.FileInfo) {
 		if err != nil {
 			log.Printf("Error deleting %s: %s\n", fullPath, err)
 		}
-		tentaSize.Sub(float64(file.Size()))
-		tentaFiles.Dec()
+		subSize(file.Size())
+		decFiles()
 	}
 }
 

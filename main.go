@@ -77,8 +77,50 @@ func main() {
 	os.Exit(0)
 }
 
+// validateConfig validates all configuration parameters
+func validateConfig() error {
+	// Validate data directory
+	info, err := os.Stat(args.dataDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Create the directory if it doesn't exist
+			log.Printf("Data directory %s does not exist, creating it", args.dataDir)
+			if err := os.MkdirAll(args.dataDir, 0755); err != nil {
+				return fmt.Errorf("failed to create data directory: %v", err)
+			}
+		} else {
+			return fmt.Errorf("error accessing data directory: %v", err)
+		}
+	} else if !info.IsDir() {
+		return fmt.Errorf("data-dir must be a directory, got file: %s", args.dataDir)
+	}
+
+	// Validate max cache age
+	if args.maxCacheAge < 0 {
+		return fmt.Errorf("max-cache-age must be >= 0, got %d", args.maxCacheAge)
+	}
+
+	// Validate HTTP port
+	if args.httpPort < 1 || args.httpPort > 65535 {
+		return fmt.Errorf("http-port must be between 1 and 65535, got %d", args.httpPort)
+	}
+
+	// Note: Cron schedule validation happens in StartCron()
+	// We don't validate it here to avoid delaying startup
+
+	return nil
+}
+
 func run(cmd *cobra.Command, argv []string) error {
 	log.Println("Starting Tenta!")
+
+	// Validate configuration before starting
+	if err := validateConfig(); err != nil {
+		return fmt.Errorf("configuration validation failed: %w", err)
+	}
+
+	log.Printf("Configuration: dataDir=%s, maxCacheAge=%dh, httpPort=%d, cron=%s",
+		args.dataDir, args.maxCacheAge, args.httpPort, args.cronSchedule)
 
 	if args.debug {
 		go func() {
